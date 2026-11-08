@@ -202,6 +202,10 @@ a{color:var(--accent)}
 .upload-panel h3{font-size:15px;font-weight:650;margin-bottom:4px}
 .upload-panel textarea{min-height:180px;font-size:13px;margin:8px 0}
 
+/* profile switcher */
+.prof-sel{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);font-weight:600}
+.prof-sel select{width:auto;max-width:220px;padding:6px 8px;font-weight:500;color:var(--ink)}
+
 /* list */
 .list-tools{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
 .input,select.input,textarea.input{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:7px 10px;width:100%;min-width:0}
@@ -373,6 +377,7 @@ tbody tr:last-child td{border-bottom:0}
         <button data-act="nav" data-view="profile">Profile &amp; resume</button>
       </nav>
       <span class="spacer"></span>
+      <label class="prof-sel" for="profile-select"><span>Profile</span><select class="input" id="profile-select" data-ui="profile" aria-label="Choose profile"><option>Main profile</option></select></label>
       <button class="btn primary" data-act="add-job">+ Add job</button>
     </header>
     <div class="content" id="view"></div>
@@ -422,7 +427,7 @@ const ICONS={
 /* ---------- state ---------- */
 const PROFILE_DEFAULT={compCols:3,name:'',headline:'',targets:'',baseResume:'',email:'',phone:'',location:'',linkedin:''};
 const state={jobs:{},profile:{...PROFILE_DEFAULT},globalChat:[],view:'dashboard',jobId:null,tab:'overview',
-  leads:{},scan:{},leadTab:'new',leadView:(()=>{try{return localStorage.getItem('ot-leadView')||'tiles'}catch(e){return 'tiles'}})(),leadOpen:{},leadSort:(()=>{try{return localStorage.getItem('ot-leadSort')||''}catch(e){return ''}})(),leadScan:null,loaded:false,offline:false,chatOpen:false,filter:'',stageFilter:'',sub:null,gmail:null,callImport:null,confirmDelete:false,gen:null};
+  leads:{},scan:{},leadTab:'new',leadView:(()=>{try{return localStorage.getItem('ot-leadView')||'tiles'}catch(e){return 'tiles'}})(),leadOpen:{},leadSort:(()=>{try{return localStorage.getItem('ot-leadSort')||''}catch(e){return ''}})(),leadScan:null,loaded:false,offline:false,chatOpen:false,filter:'',stageFilter:'',sub:null,gmail:null,callImport:null,confirmDelete:false,gen:null,profiles:{},confirmProfDel:false};
 let db=null,sample=null,mcp=null,downloads=null,toolsOK=false;
 const deleted=new Set();let chatCtl=null,chatBusy=false,genCtl=null,renderPending=false;
 
@@ -462,13 +467,18 @@ function mdToHtml(src){
 
 /* ---------- persistence ---------- */
 const timers={},chains={};
-function queueWrite(key,fn,delay=500){clearTimeout(timers[key]);timers[key]=setTimeout(()=>{delete timers[key];if(!db)return;chains[key]=(chains[key]||Promise.resolve()).then(fn).catch(e=>toast(dbErr(e)))},delay)}
+let PID=(()=>{try{return localStorage.getItem('ot-profile')||'main'}catch(e){return 'main'}})();
+const P=x=>PID==='main'?x:'p/'+PID+'/'+x;
+const pending={};
+function runWrite(key){const fn=pending[key];delete pending[key];clearTimeout(timers[key]);delete timers[key];if(!db||!fn)return;chains[key]=(chains[key]||Promise.resolve()).then(fn).catch(e=>toast(dbErr(e)))}
+function queueWrite(key,fn,delay=500){clearTimeout(timers[key]);pending[key]=fn;timers[key]=setTimeout(()=>runWrite(key),delay)}
+function flushWrites(){Object.keys(pending).forEach(runWrite)}
 function dbErr(e){const c=e&&e.code;if(c==='quota_exceeded')return 'Storage is full. Delete old jobs to add more.';if(c==='invalid_argument')return 'That change could not be saved (the record may be too large).';if(c==='revoked'||c==='not_granted')return 'Saving is not available in this view.';return 'Could not save just now. Your change will retry with the next edit.'}
 function strip(j){const o=clone(j);delete o.id;return o}
-function persistJob(id,delay){queueWrite('job:'+id,()=>{const j=state.jobs[id];return j?db.doc('jobs/'+id).set(strip(j)):db.doc('jobs/'+id).delete()},delay)}
+function persistJob(id,delay){const path=P('jobs')+'/'+id;queueWrite('job:'+id,()=>{const j=state.jobs[id];return j?db.doc(path).set(strip(j)):db.doc(path).delete()},delay)}
 function updateJob(id,patch,delay){const j=state.jobs[id];if(!j)return;for(const[k,v]of Object.entries(patch))setPath(j,k,v);j.updatedAt=Date.now();persistJob(id,delay)}
-function persistProfile(){queueWrite('profile',()=>db.doc('settings/profile').set(clone(state.profile)),700)}
-function persistChat(job){if(job){job.chat=(job.chat||[]).slice(-40);persistJob(job.id,50)}else{state.globalChat=state.globalChat.slice(-40);queueWrite('chat',()=>db.doc('chats/global').set({messages:clone(state.globalChat)}),50)}}
+function persistProfile(){const path=P('settings')+'/profile';queueWrite('profile',()=>db.doc(path).set(clone(state.profile)),700)}
+function persistChat(job){if(job){job.chat=(job.chat||[]).slice(-40);persistJob(job.id,50)}else{state.globalChat=state.globalChat.slice(-40);{const path=P('chats')+'/global';queueWrite('chat',()=>db.doc(path).set({messages:clone(state.globalChat)}),50)}}}
 function setStage(id,stage){const j=state.jobs[id];if(!j||j.stage===stage)return;const hist=(j.stageHistory||[]).concat([{stage,at:Date.now()}]);const patch={stage,stageHistory:hist};if(stage==='applied'&&!j.appliedDate)patch.appliedDate=todayISO();{const f=getPlaybook()[0];if(stage==='applied'&&f&&!j.playbook?.[f.k]?.done&&(!j.nextAction||/tailor|paste the posting|research/i.test(j.nextAction))){patch.nextAction=f.title;patch.nextDate=todayISO()}}updateJob(id,patch,50)}
 function newJob(fields){const id=uid('j');const now=Date.now();const j={company:'',role:'',location:'',salary:'',source:'',url:'',priority:'med',stage:'target',appliedDate:'',nextAction:'',nextDate:'',
   contact:{name:'',title:'',email:'',phone:''},description:'',notes:'',resume:{text:'',updatedAt:0},cover:{text:'',updatedAt:0,tone:'Warm and direct'},comms:[],chat:[],stageHistory:[{stage:fields.stage||'target',at:now}],createdAt:now,updatedAt:now,...fields,id};
@@ -482,8 +492,10 @@ function render(){
   renderPending=false;
   document.querySelectorAll('#nav button').forEach(b=>b.setAttribute('aria-current',String(b.dataset.view===state.view)));
   {const n=Object.values(state.leads).filter(l=>l.status==='new').length;$('#lead-badge').textContent=n?String(n):''}
+  if(!render.sel){render.sel=1;renderProfileSelect()}
   const v=$('#view');const sc=v.scrollTop;
   let html=state.offline?'<p class="banner">This copy can\'t save or reach Claude. Open it from your Claude artifacts to keep changes.</p>':'';
+  if(state.standalone&&!apiKey()&&state.view!=='profile')html+='<p class="banner">You\'re running Offer Track in your browser: your data is saved on this device only. To turn on the AI features (tailoring, cover letters, coach, lead scan), <a href="#" data-act="nav" data-view="profile">connect the AI of your choice</a>: Claude, ChatGPT models, Gemini, OpenRouter or a local model.</p>';
   if(!state.loaded&&!state.offline)html+='<p class="empty">Loading your pipeline…</p>';
   else html+=({dashboard:viewDashboard,board:viewBoard,leads:viewLeads,jobs:viewJobs,profile:viewProfile,job:viewJob}[state.view]||viewDashboard)();
   v.innerHTML=html;v.scrollTop=sc;
@@ -571,7 +583,7 @@ function wireBoard(){
 /* Leads */
 const SIG={funding:'Funding',leader:'New leader',program:'Partner program',posting:'Open role',email:'Email alert',chat:'From your chats'};
 function leadKey(company,role){return (String(company||'').toLowerCase().replace(/[^a-z0-9]/g,'')+'|'+String(role||'').toLowerCase().replace(/[^a-z0-9]/g,''))}
-function persistLead(id){queueWrite('lead:'+id,()=>{const l=state.leads[id];const o=clone(l);delete o.id;return db.doc('leads/'+id).set(o)},50)}
+function persistLead(id){const path=P('leads')+'/'+id;queueWrite('lead:'+id,()=>{const l=state.leads[id];const o=clone(l);delete o.id;return db.doc(path).set(o)},50)}
 function viewLeads(){
   const all=Object.values(state.leads);const counts={new:0,added:0,dismissed:0};all.forEach(l=>counts[l.status]=(counts[l.status]||0)+1);
   const sortKey=state.leadSort||(state.leadTab==='new'?'fit':'found');
@@ -581,11 +593,11 @@ function viewLeads(){
     fitlow:(a,b)=>(a.score||0)-(b.score||0)};
   const list=all.filter(l=>l.status===state.leadTab).sort(SORTS[sortKey]||SORTS.fit);
   const sc=state.scan||{};
-  const webStatus=sc.triggerId?`${sc.scheduleLabel?'Lead scan runs '+sc.scheduleLabel.replace(/^./,c=>c.toLowerCase())+'.':'Lead scan is scheduled.'}${sc.lastRun?' Last run '+fmtWhen(sc.lastRun)+(sc.lastCount!=null?' · '+sc.lastCount+' added':'')+'.':''}`:'Web scan is not scheduled yet.';
+  const webStatus=state.standalone?(apiKey()?`Scan the web with ${PROVIDERS[prov()].label.split(' (')[0]} to find fresh leads that match your profile.`:'Connect an AI provider on the Profile page to scan the web for leads.'):sc.triggerId?`${sc.scheduleLabel?'Lead scan runs '+sc.scheduleLabel.replace(/^./,c=>c.toLowerCase())+'.':'Lead scan is scheduled.'}${sc.lastRun?' Last run '+fmtWhen(sc.lastRun)+(sc.lastCount!=null?' · '+sc.lastCount+' added':'')+'.':''}`:'Web scan is not scheduled yet.';
   return `<div class="dash-head"><div><h1>Lead queue</h1><p>Hidden-market signals and fresh listings that fit your background. Add the good ones to your board.</p></div></div>
   <div class="scanbar"><div class="status"><div>${esc(webStatus)}</div>${state.leadScan?`<div class="hint">${esc(state.leadScan)}</div>`:''}</div>
-    <button class="btn" data-act="scan-gmail" ${mcp&&sample&&!state.scanBusy?'':'disabled'}>Scan Gmail alerts</button>
-    <button class="btn primary" data-act="scan-web" ${mcp&&sc.triggerId&&!state.scanBusy?'':'disabled'}>${ICONS.spark} Scan web + chats now</button></div>
+    ${mcp?`<button class="btn" data-act="scan-gmail" ${sample&&!state.scanBusy?'':'disabled'}>Scan Gmail alerts</button>`:''}
+    <button class="btn primary" data-act="scan-web" ${(state.standalone?apiKey():mcp&&sc.triggerId)&&!state.scanBusy?'':'disabled'}>${ICONS.spark} ${state.standalone?'Scan web for leads':'Scan web + chats now'}</button></div>
   <div class="lead-bar"><div class="seg" role="group" aria-label="Lead status">${[['new','New'],['added','Added'],['dismissed','Dismissed']].map(([k,l])=>`<button aria-pressed="${state.leadTab===k}" data-act="lead-tab" data-tab="${k}">${l} <span class="mono">${counts[k]||0}</span></button>`).join('')}</div><span class="spacer"></span>
     <label class="sub" for="lead-sort" style="font-size:13px;color:var(--muted)">Sort by</label><select class="input" id="lead-sort" data-ui="leadSort" style="width:auto;padding:5px 8px">${[['fit','Best fit'],['fitlow','Lowest fit'],['signal','Newest signal'],['found','Recently added'],['company','Company A–Z'],['type','Signal type']].map(([k,l])=>`<option value="${k}" ${sortKey===k?'selected':''}>${l}</option>`).join('')}</select>
     <div class="seg" role="group" aria-label="Layout"><button aria-pressed="${state.leadView==='tiles'}" data-act="lead-view" data-v="tiles"><svg viewBox="0 0 16 16" fill="currentColor"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg> Tiles</button><button aria-pressed="${state.leadView==='list'}" data-act="lead-view" data-v="list"><svg viewBox="0 0 16 16" fill="currentColor"><rect x="2" y="3" width="12" height="2" rx="1"/><rect x="2" y="7" width="12" height="2" rx="1"/><rect x="2" y="11" width="12" height="2" rx="1"/></svg> List</button></div></div>
@@ -635,7 +647,7 @@ async function scanGmail(){
     state.leadScan=added?`Added ${added} lead${added>1?'s':''} from Gmail.`:'No new fitting roles found in recent job emails.';state.leadTab='new'}
   catch(e){state.leadScan=e&&e.code&&gmailErr(e)&&['server_not_connected','needs_reauth','not_in_manifest','blocked_by_policy','selection_required','server_unavailable','tool_error'].includes(e.code)?gmailErr(e):sampleErr(e&&e.code)}
   finally{state.scanBusy=false;render()}}
-function taskStrip(){
+function taskStrip(){if(state.standalone)return '';
   const sc=state.scan||{};const t=state.task;const url=sc.taskUrl||'';
   let meta=esc(sc.scheduleLabel||(sc.triggerId?'Scheduled lead scan':'Lead scan not scheduled'));
   if(t){
@@ -660,7 +672,7 @@ async function loadTask(){
     const list=(r.payload&&Array.isArray(r.payload.data))?r.payload.data:[];const t=list.find(x=>x.id===id);
     state.task=t?{name:t.name,enabled:t.enabled,next_run_at:t.next_run_at,last_run:t.last_run||null}:null;if(state.view==='dashboard')safeRender()}
   catch(e){state.task=null}}
-async function scanWeb(){
+async function scanWeb(){if(state.standalone)return standaloneScan();
   const id=state.scan?.triggerId;if(!mcp||!id)return;state.scanBusy=true;state.leadScan='Starting the web scan…';render();
   try{await mcp.callTool('Claude Code Remote','fire_trigger',{trigger_id:id},{cache:false});state.leadScan='Scan started. New leads from the web and your other chats appear here in a few minutes.';setTimeout(()=>{mcp.invalidate?.('Claude Code Remote','list_triggers').catch(()=>{});loadTask()},4000)}
   catch(e){state.leadScan=({server_not_connected:'The scheduled-task connector is not available here. The morning scan still runs on schedule.',not_in_manifest:'Starting scans was not allowed for this page.',tool_error:'The scan could not start: '+(e.message||'unknown error')})[e&&e.code]||'The scan could not start. Try again shortly.'}
@@ -678,7 +690,7 @@ function viewJobs(){
 
 /* Profile */
 function viewProfile(){const p=state.profile;
-  return `<div class="dash-head"><div><h1>Profile &amp; base resume</h1><p>Claude uses this for every tailored resume, cover letter and answer.</p></div></div>
+  return `<div class="dash-head"><div><h1>Profile &amp; base resume</h1><p>Claude uses this for every tailored resume, cover letter and answer. You're editing <b>${esc(profLabel(PID))}</b>.</p></div><span class="spacer"></span><button class="btn" data-act="new-profile-open">+ New profile</button></div>
   <div class="form-grid"><section class="panel"><h2>About you</h2><div class="fields">
     <div class="field"><label for="p-name">Name</label><input class="input" id="p-name" data-pfield="name" value="${esc(p.name)}"></div>
     <div class="field"><label for="p-email">Your email (marks sent vs received)</label><input class="input" id="p-email" data-pfield="email" value="${esc(p.email)}"></div>
@@ -702,7 +714,13 @@ function viewProfile(){const p=state.profile;
       <div><button class="btn small ghost danger" data-act="pb-del" data-i="${i}">Remove step</button></div></div></div>`).join('')}
     <div class="pb-row"><button class="btn small" data-act="pb-add">+ Add step</button><button class="btn small ghost" data-act="pb-reset">Reset to defaults</button></div></section>
   <section class="panel" style="grid-column:1/-1"><h2>Base resume</h2><p class="hint" style="margin:-6px 0 8px">Paste your master resume as plain text. Tailored versions for each job start from this.</p>
-    <textarea class="input doc-editor" id="p-resume" data-pfield="baseResume" placeholder="Paste your resume here">${esc(p.baseResume)}</textarea></section></div>`}
+    <textarea class="input doc-editor" id="p-resume" data-pfield="baseResume" placeholder="Paste your resume here">${esc(p.baseResume)}</textarea></section>
+  ${state.standalone?standalonePanels():''}
+  <section class="panel" style="grid-column:1/-1"><h2>About this profile</h2>
+    <p style="margin:0 0 6px;font-size:13px">Profile ID: <code class="mono">${esc(PID)}</code>${PID==='main'?' (the original profile)':''}. Data path: <code class="mono">${PID==='main'?'top level':esc('p/'+PID+'/')}</code></p>
+    <p class="hint" style="margin:0 0 10px">To schedule an automatic lead scan for this profile, ask Claude: "Set up the Offer Track lead scan for the profile with ID ${esc(PID)}". Scans write to this profile's own leads.</p>
+    ${PID==='main'?'<p class="hint" style="margin:0">The main profile can\'t be deleted.</p>':state.confirmProfDel?`<span class="confirm">Delete this profile and all its jobs, leads, resume and chats? This can't be undone. <button class="btn small danger" data-act="prof-del">Delete profile</button><button class="btn small ghost" data-act="prof-del-cancel">Keep</button></span>`:'<button class="btn small ghost danger" data-act="prof-del-ask">Delete this profile</button>'}
+  </section></div>`}
 
 /* Job detail */
 function viewJob(){
@@ -908,7 +926,7 @@ async function ask(q){
   catch(e){if(e.code==='refused'){m.content='';m.error='Claude declined that request. Try rephrasing it.'}else{m.content=e.text||'';if(e.code!=='cancelled')m.error=sampleErr(e.code)}}
   finally{delete m.pending;chatBusy=false;if(!m.content&&!m.error)list.splice(list.indexOf(m),1);persistChat(j);renderAssistant();if(toolsOK)safeRender()}
 }
-function sampleErr(c){return({not_granted:'Claude access was not allowed for this page.',sampling_disabled:'Claude is not available for this account.',rate_limited:'Too many requests right now. Try again in a minute.',session_expired:'Sign in to Claude again, then retry.',prompt_too_large:'There is too much text in this job for one request. Shorten the description or notes.',empty_completion:'Claude returned nothing. Try asking more simply.',invalid_json:'Claude\'s answer could not be read. Try again.'})[c]||'Something interrupted Claude. Try again.'}
+function sampleErr(c){return({no_key:'Connect an AI provider on the Profile page to use AI features.',bad_key:'Your AI provider rejected the API key. Check it on the Profile page.',no_web:'This AI provider has no web search here.',not_granted:'Claude access was not allowed for this page.',sampling_disabled:'Claude is not available for this account.',rate_limited:'Too many requests right now. Try again in a minute.',session_expired:'Sign in to Claude again, then retry.',prompt_too_large:'There is too much text in this job for one request. Shorten the description or notes.',empty_completion:'Claude returned nothing. Try asking more simply.',invalid_json:'Claude\'s answer could not be read. Try again.'})[c]||'Something interrupted Claude. Try again.'}
 
 /* ---------- generation ---------- */
 function saveDoc(j,kind,text){const d=j[kind]||{};updateJob(j.id,{[kind]:{...d,prev:d.text||'',text,updatedAt:Date.now()}},50)}
@@ -1366,9 +1384,19 @@ document.addEventListener('click',e=>{
     case 'lead-sort':state.leadSort=t.dataset.k;try{localStorage.setItem('ot-leadSort',state.leadSort)}catch(e){}render();break;
     case 'lead-view':state.leadView=t.dataset.v;try{localStorage.setItem('ot-leadView',state.leadView)}catch(e){}render();break;
     case 'lead-expand':if(e.target.closest('a,button'))return;state.leadOpen[t.dataset.id]=!state.leadOpen[t.dataset.id];render();break;
+    case 'new-profile-open':openNewProfile();break;
+    case 'key-clear':{const c=aiCfg();delete c.keys[c.provider];saveAiCfg(c);render();toast('API key removed from this browser');break}
+    case 'key-test':{const ki=$('#ot-key');if(ki&&ki.value.trim()!==(aiCfg().keys[prov()]||'')){const c=aiCfg();const v=ki.value.trim();if(v)c.keys[c.provider]=v;else delete c.keys[c.provider];saveAiCfg(c)}const bi=$('#ot-base');if(bi){const c=aiCfg();c.baseUrl=bi.value.trim();saveAiCfg(c)}
+      const set=v=>{state.keyStatus=v;const x=$('#key-status');if(x)x.textContent=v};set('Testing…');sample('Reply with the word OK.',{modelTier:'quick'}).then(()=>set('Connected. '+PROVIDERS[prov()].label.split(' (')[0]+' is working.')).catch(e=>set(sampleErr(e&&e.code)+(e&&e.message&&e.code!=='no_key'?' ('+String(e.message).slice(0,140)+')':'')));break}
+    case 'backup-export':{const data=db._export?db._export():{};downloads.save({filename:'offer-track-backup-'+todayISO()+'.json',data:JSON.stringify({app:'offer-track',version:1,exportedAt:new Date().toISOString(),data},null,1)});break}
+    case 'backup-apply':{flushWrites();db._import(state.pendingImport);state.pendingImport=null;toast('Backup restored');switchProfile('main');location.reload();break}
+    case 'backup-cancel':state.pendingImport=null;render();break;
     case 'pb-add':{const pb=clone(getPlaybook());pb.push({k:uid('s'),title:'New step',why:'',ph:'Notes',ask:'Help me complete this step for this job.',btn:''});state.profile.playbook=pb;persistProfile();render();break}
     case 'pb-del':{const pb=clone(getPlaybook());pb.splice(+t.dataset.i,1);state.profile.playbook=pb.length?pb:[];persistProfile();render();break}
     case 'pb-reset':state.profile.playbook=[];persistProfile();render();toast('Checklist reset to the default steps');break;
+    case 'prof-del-ask':state.confirmProfDel=true;render();break;
+    case 'prof-del-cancel':state.confirmProfDel=false;render();break;
+    case 'prof-del':deleteProfile();break;
     case 'lead-tab':state.leadTab=t.dataset.tab;render();break;
     case 'lead-add':{const nj=addLeadToBoard(t.dataset.id);if(nj)toast(`${nj.company} added to your board`);render();break}
     case 'lead-dismiss':state.leads[t.dataset.id].status='dismissed';persistLead(t.dataset.id);render();break;
@@ -1393,7 +1421,7 @@ document.addEventListener('input',e=>{
   const t=e.target;const j=curJob();
   if(t.dataset.field&&j){const v=t.value;updateJob(j.id,{[t.dataset.field]:v},700);
     if(/^(resume|cover)\.text$/.test(t.dataset.field)){const k=t.dataset.field.split('.')[0];setPath(j,k+'.updatedAt',Date.now());const s=$('#doc-status');if(s)s.textContent='Saving…';clearTimeout(input.t);input.t=setTimeout(()=>{const s2=$('#doc-status');if(s2)s2.textContent='Saved · last updated '+fmtWhen(Date.now())},900)}}
-  else if(t.dataset.pfield){state.profile[t.dataset.pfield]=t.value;persistProfile()}
+  else if(t.dataset.pfield){state.profile[t.dataset.pfield]=t.value;persistProfile();if(t.dataset.pfield==='name'){syncProfileName();renderProfileSelect()}}
   else if(t.dataset.pbi!=null){const pb=clone(getPlaybook());const st=pb[+t.dataset.pbi];if(st){st[t.dataset.pbf]=t.value;if(!st.ph)st.ph='Notes';state.profile.playbook=pb;persistProfile()}}
   else if(t.dataset.ui==='filter'){state.filter=t.value;const pos=t.selectionStart;render();const f=$('#f-search');f.focus();f.setSelectionRange(pos,pos)}
   if(t.id==='as-input'){t.style.height='auto';t.style.height=Math.min(160,t.scrollHeight)+'px'}
@@ -1402,6 +1430,12 @@ function input(){}
 document.addEventListener('change',e=>{const t=e.target;
   if(t.id==='rev-ok'){const b=$('#rev-pdf-btn');if(b)b.disabled=!t.checked}
   if(t.dataset.ui==='stageFilter'){state.stageFilter=t.value;render()}
+  if(t.dataset.ui==='ai-provider'){const c=aiCfg();c.provider=t.value;saveAiCfg(c);state.keyStatus='';render()}
+  if(t.dataset.ui==='ai-base'){const c=aiCfg();c.baseUrl=t.value.trim();saveAiCfg(c);renderPending=true}
+  if(t.dataset.ui==='apikey'){const c=aiCfg();const v=t.value.trim();state.keyStatus='';if(v)c.keys[c.provider]=v;else delete c.keys[c.provider];saveAiCfg(c);const x=$('#key-status');if(x)x.textContent=v?'Saved in this browser.':'Not set up yet.'}
+  if(t.dataset.ui==='model-main'||t.dataset.ui==='model-quick'){const c=aiCfg();const w=t.dataset.ui==='model-main'?'main':'quick';c.models[c.provider]={...(c.models[c.provider]||{}),[w]:t.value.trim()};saveAiCfg(c)}
+  if(t.dataset.ui==='backup-file'&&t.files[0]){const r=new FileReader();r.onload=()=>{try{const o=JSON.parse(String(r.result));const d=o&&o.app==='offer-track'?o.data:o;if(!d||typeof d!=='object')throw 0;state.pendingImport=d;render()}catch(e){toast('That file is not an Offer Track backup.')}};r.readAsText(t.files[0]);t.value=''}
+  if(t.dataset.ui==='profile'){if(t.value==='__new'){renderProfileSelect();openNewProfile()}else switchProfile(t.value)}
   if(t.dataset.ui==='leadSort'){state.leadSort=t.value;try{localStorage.setItem('ot-leadSort',t.value)}catch(e){}render()}
   if(t.dataset.ui==='resume-file'&&t.files[0]){handleResumeFile(t.files[0]);t.value=''}
   if(t.dataset.ui==='csv'&&t.files[0]){const r=new FileReader();r.onload=()=>importCalls(String(r.result));r.readAsText(t.files[0])}
@@ -1419,7 +1453,8 @@ document.addEventListener('submit',e=>{e.preventDefault();const f=e.target;const
   switch(f.dataset.form){
     case 'chat':{const q=fd.q;f.reset();ask(q);break}
     case 'task-url':{const u=String(fd.url||'').trim();if(u&&!/^https:\/\//.test(u)){toast('Paste a full https:// link.');break}
-      state.scan={...(state.scan||{}),taskUrl:u};if(db)queueWrite('scan',()=>db.doc('settings/scan').update({taskUrl:u}),0);state.editTaskUrl=false;render();toast(u?'Link saved':'Link removed');break}
+      state.scan={...(state.scan||{}),taskUrl:u};if(db){const path=P('settings')+'/scan';queueWrite('scan',()=>db.doc(path).set({...state.scan}),0)};state.editTaskUrl=false;render();toast(u?'Link saved':'Link removed');break}
+    case 'new-profile':{const n=String(fd.name||'').trim();if(!n)break;$('#modal-root').innerHTML='';createProfile(n,!!fd.copy);break}
     case 'gmail-search':gmailSearch(String(fd.q||'').trim());break;
     case 'call':addComm(j,{type:'call',dir:fd.dir,date:fd.date,who:fd.who,duration:fd.duration,subject:fd.dir==='in'?'Incoming call':'Outgoing call',body:fd.body});state.sub=null;render();toast('Call logged');break;
     case 'note':addComm(j,{type:fd.type,date:fd.date,who:fd.who,subject:fd.subject||(fd.type==='meeting'?'Meeting':'Note'),body:fd.body});state.sub=null;render();toast('Saved');break;
@@ -1429,16 +1464,151 @@ document.addEventListener('submit',e=>{e.preventDefault();const f=e.target;const
 async function copy(text){if(!text)return;try{await navigator.clipboard.writeText(text);toast('Copied')}catch{toast('Copy was blocked. Select the text and copy it manually.')}}
 matchMedia('(min-width:1180px)').addEventListener('change',renderAssistant);
 
-/* ---------- boot ---------- */
-{const h=location.hash.slice(1);if(['dashboard','board','leads','jobs','profile'].includes(h))state.view=h}
-render();
-(async()=>{
-  const c=window.claude;
-  if(!c||typeof c.use!=='function'){state.offline=true;state.loaded=true;render();return}
-  [db,sample,mcp,downloads]=await Promise.all(['db','sample','mcp','downloads'].map(n=>c.use(n).catch(()=>null)));
-  if(sample){try{const l=await sample.limits();toolsOK=!!l.tools}catch{toolsOK=false}}
-  if(!db){state.offline=true;state.loaded=true;render();return}
-  db.collection('jobs').onSnapshot(snap=>{
+/* ---------- standalone (outside Claude) ---------- */
+const LS={get:k=>{try{return localStorage.getItem(k)}catch(e){return null}},set:(k,v)=>{try{v==null?localStorage.removeItem(k):localStorage.setItem(k,v)}catch(e){}}};
+const PROVIDERS={
+  anthropic:{label:'Anthropic (Claude)',ai:'Claude',main:'claude-sonnet-4-5',quick:'claude-haiku-4-5',keyHint:'sk-ant-…',console:'console.anthropic.com',web:true},
+  openai:{label:'OpenAI (ChatGPT models)',ai:'GPT',main:'gpt-4.1',quick:'gpt-4.1-mini',keyHint:'sk-…',console:'platform.openai.com',web:true},
+  gemini:{label:'Google Gemini',ai:'Gemini',main:'gemini-2.5-pro',quick:'gemini-2.5-flash',keyHint:'AIza…',console:'aistudio.google.com',web:true},
+  openrouter:{label:'OpenRouter (any model)',ai:'AI',main:'anthropic/claude-sonnet-4.5',quick:'openai/gpt-4.1-mini',keyHint:'sk-or-…',console:'openrouter.ai',web:true},
+  custom:{label:'Custom OpenAI-compatible (Ollama, LM Studio, Groq…)',ai:'AI',main:'',quick:'',keyHint:'optional',console:'',web:false}};
+function aiCfg(){let c={};try{c=JSON.parse(LS.get('ot-ai')||'{}')||{}}catch(e){}c.keys=c.keys||{};c.models=c.models||{};
+  const old=LS.get('ot-api-key');if(old&&!c.keys.anthropic){c.keys.anthropic=old;c.provider=c.provider||'anthropic'}
+  try{const om=JSON.parse(LS.get('ot-models')||'null');if(om&&!c.models.anthropic)c.models.anthropic=om}catch(e){}
+  if(!PROVIDERS[c.provider])c.provider='anthropic';return c}
+function saveAiCfg(c){LS.set('ot-ai',JSON.stringify(c));LS.set('ot-api-key',null);LS.set('ot-models',null)}
+const prov=()=>aiCfg().provider;
+const apiKey=()=>{const c=aiCfg();return c.provider==='custom'?(c.baseUrl?'(custom)':''):(c.keys[c.provider]||'')};
+const realKey=()=>{const c=aiCfg();return c.keys[c.provider]||''};
+const models=()=>{const c=aiCfg();const d=PROVIDERS[c.provider];return{main:c.models[c.provider]?.main||d.main,quick:c.models[c.provider]?.quick||d.quick||c.models[c.provider]?.main||d.main}};
+const aiName=()=>state.standalone?PROVIDERS[prov()].ai:'Claude';
+function deepMerge(a,b){const o=clone(a||{});for(const[k,v]of Object.entries(b||{})){if(v&&typeof v==='object'&&!Array.isArray(v)&&o[k]&&typeof o[k]==='object'&&!Array.isArray(o[k]))o[k]=deepMerge(o[k],v);else o[k]=clone(v)}return o}
+function localDB(){
+  const KEY='offer-track-db';let data={};try{data=JSON.parse(LS.get(KEY)||'{}')||{}}catch(e){data={}}
+  const subs=new Set();
+  const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(data))}catch(e){toast('Browser storage is full. Export a backup, then delete old jobs or leads.');throw{code:'quota_exceeded',message:'storage full'}}};
+  const fire=()=>setTimeout(()=>subs.forEach(f=>{try{f()}catch(e){console.error(e)}}),0);
+  window.addEventListener('storage',e=>{if(e.key===KEY){try{data=JSON.parse(e.newValue||'{}')||{}}catch(_){}fire()}});
+  const snapDoc=p=>{const d=data[p];return{id:p.split('/').pop(),exists:d!==undefined,data:()=>d===undefined?undefined:clone(d),metadata:{fromCache:false,hasPendingWrites:false}}};
+  const colSnap=p=>{const n=p.split('/').length+1;const docs=Object.keys(data).filter(k=>k.startsWith(p+'/')&&k.split('/').length===n).sort().map(snapDoc);return{docs,size:docs.length,empty:!docs.length,metadata:{fromCache:false,hasPendingWrites:false},docChanges:()=>[]}};
+  const sub=fn=>{subs.add(fn);setTimeout(fn,0);return()=>subs.delete(fn)};
+  const doc=p=>({id:p.split('/').pop(),path:p,get:async()=>snapDoc(p),set:async d=>{data[p]=clone(d);save();fire()},
+    update:async d=>{if(data[p]===undefined)throw{code:'invalid_argument',message:'missing'};data[p]=deepMerge(data[p],d);save();fire()},
+    delete:async()=>{delete data[p];save();fire()},onSnapshot:next=>sub(()=>next(snapDoc(p))),collection:c=>col(p+'/'+c)});
+  const col=p=>({path:p,doc:id=>doc(p+'/'+(id||uid('d'))),get:async()=>colSnap(p),onSnapshot:next=>sub(()=>next(colSnap(p))),
+    add:async d=>{const r=doc(p+'/'+uid('d'));await r.set(d);return r},where(){return this},orderBy(){return this},limit(){return this}});
+  return{doc,collection:col,_export:()=>clone(data),_import:o=>{data=clone(o||{});save();fire()}}}
+function localDownloads(){return{save:async({filename,data})=>{const blob=data instanceof Blob?data:new Blob([data]);const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=filename;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),4000);return{status:'saved'}}}}
+function parseJSONLoose(t){const tryP=x=>{try{return JSON.parse(x)}catch(e){return undefined}};let v=tryP(t);if(v!==undefined)return v;
+  const f=/```(?:json)?\s*([\s\S]*?)```/.exec(t);if(f){v=tryP(f[1]);if(v!==undefined)return v}
+  const i=Math.min(...['{','['].map(c=>{const k=t.indexOf(c);return k<0?1e9:k})),j=Math.max(t.lastIndexOf('}'),t.lastIndexOf(']'));if(i<j){v=tryP(t.slice(i,j+1));if(v!==undefined)return v}
+  throw{code:'invalid_json',message:'Could not read JSON',text:t}}
+function httpErr(status,t){return{code:status===401||status===403?'bad_key':status===429||status===529||status===503?'rate_limited':/too long|context length|maximum context|too many tokens/i.test(t)?'prompt_too_large':'upstream_error',message:String(t).slice(0,400)}}
+async function aiFetch(url,init){if(!apiKey())throw{code:'no_key',message:'No AI provider key'};let res;
+  try{res=await fetch(url,init)}catch(e){throw{code:e&&e.name==='AbortError'?'cancelled':'upstream_error',message:String(e)+(prov()==='custom'?' (check the base URL and that the server allows this site via CORS)':'')}}
+  if(!res.ok){const t=await res.text().catch(()=>'');throw httpErr(res.status,t)}return res}
+function endpoint(){const c=aiCfg();const k=realKey();
+  switch(c.provider){
+    case 'anthropic':return{kind:'anthropic',url:'https://api.anthropic.com/v1/messages',headers:{'content-type':'application/json','x-api-key':k,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'}};
+    case 'gemini':return{kind:'gemini',base:'https://generativelanguage.googleapis.com/v1beta/models/',headers:{'content-type':'application/json','x-goog-api-key':k}};
+    case 'openrouter':return{kind:'openai',url:'https://openrouter.ai/api/v1/chat/completions',headers:{'content-type':'application/json',authorization:'Bearer '+k,'X-Title':'Offer Track'}};
+    case 'custom':{const base=String(c.baseUrl||'').replace(/\/+$/,'');return{kind:'openai',url:(/\/chat\/completions$/.test(base)?base:base+'/chat/completions'),headers:{'content-type':'application/json',...(k?{authorization:'Bearer '+k}:{})}}}
+    default:return{kind:'openai',url:'https://api.openai.com/v1/chat/completions',headers:{'content-type':'application/json',authorization:'Bearer '+k}}}}
+async function readSSE(res,onEvent,ctl){const rd=res.body.getReader(),dec=new TextDecoder();let buf='';
+  for(;;){const{done,value}=await rd.read();if(done)break;buf+=dec.decode(value,{stream:true}).replace(/\r/g,'');let k;
+    while((k=buf.indexOf('\n\n'))>=0){const chunk=buf.slice(0,k);buf=buf.slice(k+2);const data=chunk.split('\n').filter(l=>l.startsWith('data:')).map(l=>l.slice(5).trim()).join('');if(!data||data==='[DONE]')continue;let ev;try{ev=JSON.parse(data)}catch(_){continue}onEvent(ev)}}}
+async function aiGenerate({messages,system,model,stream,onText,signal,maxTokens=8000}){
+  const ep=endpoint();let text='',truncated=false;const push=d=>{if(!d)return;text+=d;if(onText)try{onText({text,delta:d})}catch(_){}};
+  if(ep.kind==='anthropic'){const body={model,max_tokens:maxTokens,messages,stream:!!stream};if(system)body.system=system;
+    const res=await aiFetch(ep.url,{method:'POST',headers:ep.headers,body:JSON.stringify(body),signal});
+    if(stream)await readSSE(res,ev=>{if(ev.type==='content_block_delta'&&ev.delta?.type==='text_delta')push(ev.delta.text);else if(ev.type==='message_delta'&&ev.delta?.stop_reason==='max_tokens')truncated=true;else if(ev.type==='error')throw{code:'upstream_error',message:ev.error?.message||'error',text}});
+    else{const j=await res.json();push((j.content||[]).filter(b=>b.type==='text').map(b=>b.text).join(''));truncated=j.stop_reason==='max_tokens'}}
+  else if(ep.kind==='gemini'){const body={contents:messages.map(m=>({role:m.role==='assistant'?'model':'user',parts:[{text:m.content}]})),generationConfig:{maxOutputTokens:maxTokens}};if(system)body.systemInstruction={parts:[{text:system}]};
+    const url=ep.base+encodeURIComponent(model)+(stream?':streamGenerateContent?alt=sse':':generateContent');
+    const res=await aiFetch(url,{method:'POST',headers:ep.headers,body:JSON.stringify(body),signal});
+    const take=ev=>{const c=ev.candidates?.[0];(c?.content?.parts||[]).forEach(p=>{if(p.text&&!p.thought)push(p.text)});if(c?.finishReason==='MAX_TOKENS')truncated=true};
+    if(stream)await readSSE(res,take);else take(await res.json())}
+  else{const msgs=system?[{role:'system',content:system},...messages]:messages;const body={model,messages:msgs,stream:!!stream,max_tokens:maxTokens};
+    if(prov()==='openai'){delete body.max_tokens;body.max_completion_tokens=maxTokens}
+    const res=await aiFetch(ep.url,{method:'POST',headers:ep.headers,body:JSON.stringify(body),signal});
+    if(stream)await readSSE(res,ev=>{if(ev.error)throw{code:'upstream_error',message:ev.error.message||'error',text};const ch=ev.choices?.[0];push(ch?.delta?.content);if(ch?.finish_reason==='length')truncated=true});
+    else{const j=await res.json();const ch=j.choices?.[0];push(ch?.message?.content);truncated=ch?.finish_reason==='length'}}
+  return{text,truncated}}
+function apiSample(){
+  const toMsgs=input=>{if(typeof input==='string')return[{role:'user',content:input}];const out=[];for(const m of input){if(!m||!m.content)continue;const last=out.at(-1);if(last&&last.role===m.role)last.content+='\n\n'+m.content;else out.push({role:m.role,content:String(m.content)})}while(out.length&&out[0].role!=='user')out.shift();return out};
+  const call=async(input,opts={},asJson=false)=>{
+    const m=models();const model=opts.modelTier==='quick'?m.quick:m.main;if(!model)throw{code:'no_key',message:'No model set'};
+    const ctl=new AbortController();if(opts.signal){if(opts.signal.aborted)throw{code:'cancelled'};opts.signal.addEventListener('abort',()=>ctl.abort(),{once:true})}
+    let r;try{r=await aiGenerate({messages:toMsgs(input),system:asJson?'Reply with only the requested JSON value. No prose and no code fences.':'',model,stream:!!opts.onText,onText:opts.onText,signal:ctl.signal})}
+    catch(e){if(e&&e.code)throw e;throw{code:ctl.signal.aborted?'cancelled':'upstream_error',message:String(e)}}
+    if(!r.text.trim())throw{code:'empty_completion',message:'empty'};
+    return{text:r.text,truncated:r.truncated,modelTierApplied:opts.modelTier||'default'}};
+  const f=(i,o)=>call(i,o||{});
+  f.json=async(i,o)=>parseJSONLoose((await call(i,{...(o||{}),onText:undefined},true)).text);
+  f.limits=async()=>({maxPromptBytes:65536});
+  return f}
+async function webSearchText(prompt){
+  const c=aiCfg(),m=models(),k=realKey();
+  if(c.provider==='anthropic'){const res=await aiFetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:endpoint().headers,body:JSON.stringify({model:m.main,max_tokens:8000,messages:[{role:'user',content:prompt}],tools:[{type:'web_search_20250305',name:'web_search',max_uses:8}]})});
+    const j=await res.json();const t=(j.content||[]).filter(b=>b.type==='text').map(b=>b.text);return t.at(-1)||t.join('\n')}
+  if(c.provider==='gemini'){const res=await aiFetch('https://generativelanguage.googleapis.com/v1beta/models/'+encodeURIComponent(m.main)+':generateContent',{method:'POST',headers:endpoint().headers,body:JSON.stringify({contents:[{role:'user',parts:[{text:prompt}]}],tools:[{google_search:{}}]})});
+    const j=await res.json();return(j.candidates?.[0]?.content?.parts||[]).map(p=>p.text||'').join('')}
+  if(c.provider==='openai'){const go=type=>aiFetch('https://api.openai.com/v1/responses',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+k},body:JSON.stringify({model:m.main,input:prompt,tools:[{type}]})});
+    let res;try{res=await go('web_search')}catch(e){if(e.code==='upstream_error')res=await go('web_search_preview');else throw e}
+    const j=await res.json();if(j.output_text)return j.output_text;return(j.output||[]).filter(o=>o.type==='message').flatMap(o=>o.content||[]).filter(c=>c.type==='output_text').map(c=>c.text).join('\n')}
+  if(c.provider==='openrouter'){const model=m.main.endsWith(':online')?m.main:m.main+':online';const res=await aiFetch('https://openrouter.ai/api/v1/chat/completions',{method:'POST',headers:endpoint().headers,body:JSON.stringify({model,messages:[{role:'user',content:prompt}]})});
+    const j=await res.json();return j.choices?.[0]?.message?.content||''}
+  throw{code:'no_web',message:'This AI provider has no web search here.'}}
+async function standaloneScan(){
+  if(!apiKey()){toast(sampleErr('no_key'));return}
+  if(!PROVIDERS[prov()].web){state.leadScan='Web search isn\'t available with a custom endpoint. Pick another AI provider on the Profile page to scan the web.';render();return}
+  state.scanBusy=true;state.leadScan='Searching the web for fresh leads… this can take a minute or two.';render();
+  const p=state.profile;const known=[...new Set([...Object.values(state.leads),...Object.values(state.jobs)].map(x=>x.company).filter(Boolean))];
+  const prompt=`Find fresh job leads for this candidate using web search. Look for signals from the last 2-3 weeks: funding rounds, newly appointed leaders who would hire for the target roles, new programs or expansions that create those roles, and open roles that match the targets in the candidate's location or remote. Open sources to confirm dates and facts. Never invent companies, people, dates or links.
+
+CANDIDATE: ${p.name||''}
+Headline: ${String(p.headline||'').slice(0,800)}
+Targets: ${String(p.targets||'').slice(0,600)}
+Location: ${p.location||'not given'}
+Focus: ${String(p.scanFocus||'').slice(0,600)}
+Resume (excerpt): ${String(p.baseResume||'').slice(0,2500)}
+Skip these companies (already tracked): ${known.join(', ')||'none'}
+
+When done, reply with ONLY a JSON array (up to 8 items) of {"company":"","role":"role to pitch or the open role","location":"","signalType":"funding|leader|program|posting","signal":"one sentence with what happened and its date","whyFit":"one sentence","angle":"one sentence: who to contact and how to open","contactName":"","score":0-100,"url":"source URL","sourceDate":"YYYY-MM-DD"}.`;
+  try{const arr=parseJSONLoose(await webSearchText(prompt));const list=Array.isArray(arr)?arr:[];let n=0;
+    const seen=new Set(known.map(x=>x.toLowerCase().replace(/[^a-z0-9]/g,'')));
+    for(const o of list.slice(0,8)){if(!o||!o.company)continue;const k=String(o.company).toLowerCase().replace(/[^a-z0-9]/g,'');if(seen.has(k))continue;seen.add(k);
+      const id='lw'+k.slice(0,40)+'-'+todayISO().replace(/-/g,'');
+      state.leads[id]={id,company:String(o.company),role:String(o.role||''),location:String(o.location||''),signalType:['funding','leader','program','posting'].includes(o.signalType)?o.signalType:'posting',signal:String(o.signal||''),whyFit:String(o.whyFit||''),angle:String(o.angle||''),contactName:String(o.contactName||''),score:Math.max(0,Math.min(100,Math.round(Number(o.score)||0))),url:/^https?:\/\//.test(o.url||'')?o.url:'',sourceDate:/^\d{4}-\d{2}-\d{2}$/.test(o.sourceDate||'')?o.sourceDate:'',foundAt:Date.now(),status:'new',origin:'web'};
+      persistLead(id);n++}
+    state.leadScan=n?`Added ${n} new lead${n>1?'s':''}.`:'No new leads found this time. Try broadening your lead scan focus on the Profile page.';state.leadTab='new'}
+  catch(e){state.leadScan=e&&e.code==='no_web'?'Web search isn\'t available with a custom endpoint. Switch to Anthropic, OpenAI, Gemini or OpenRouter on the Profile page to scan the web.':e&&e.code==='invalid_json'?'The AI replied, but its results could not be read. Try again.':/web_search|google_search|tool/i.test(e?.message||'')?'Web search is not enabled for this API key or model. Check your provider settings, or try another model.':sampleErr(e&&e.code)+(e?.message&&e.code==='upstream_error'?' ('+String(e.message).slice(0,160)+')':'')}
+  finally{state.scanBusy=false;render()}}
+function standalonePanels(){const c=aiCfg(),pv=c.provider,d=PROVIDERS[pv],k=c.keys[pv]||'',m=models();
+  return `<section class="panel"><h2>AI provider <span class="count">this browser only</span></h2>
+    <p class="hint" style="margin:-6px 0 10px">Choose which AI powers tailoring, cover letters, the coach, fit checks, proofreading, layout and lead scans. Use is billed by that provider to your account. Your key stays in this browser and goes only to the provider you pick.</p>
+    <div class="fields"><div class="field full"><label for="ot-prov">Provider</label><select class="input" id="ot-prov" data-ui="ai-provider">${Object.entries(PROVIDERS).map(([id,p])=>`<option value="${id}" ${id===pv?'selected':''}>${esc(p.label)}</option>`).join('')}</select></div>
+      ${pv==='custom'?`<div class="field full"><label for="ot-base">Base URL (OpenAI-compatible)</label><input class="input mono" id="ot-base" data-ui="ai-base" placeholder="http://localhost:11434/v1" value="${esc(c.baseUrl||'')}"></div>`:''}
+      <div class="field full"><label for="ot-key">API key${pv==='custom'?' (if your server needs one)':''}</label><input class="input" type="password" id="ot-key" data-ui="apikey" autocomplete="off" placeholder="${esc(d.keyHint)}" value="${esc(k)}"></div>
+      <div class="field"><label for="ot-m1">Main model</label><input class="input mono" id="ot-m1" data-ui="model-main" value="${esc(m.main)}" placeholder="model name"></div>
+      <div class="field"><label for="ot-m2">Quick model</label><input class="input mono" id="ot-m2" data-ui="model-quick" value="${esc(m.quick)}" placeholder="model name"></div></div>
+    <p class="hint" style="margin:8px 0 0">${d.console?`Get a key at ${esc(d.console)}. `:'For Ollama, start it with OLLAMA_ORIGINS set to allow this site. '}${d.web?"Lead scans use this provider's web search.":'Lead scans need a provider with web search.'} Model names change over time; replace them with any model your account can use.</p>
+    <div class="pb-row"><button class="btn small" data-act="key-test">Test connection</button>${k?'<button class="btn small ghost danger" data-act="key-clear">Remove key</button>':''}<span class="hint" id="key-status">${esc(state.keyStatus||(apiKey()?'Saved in this browser.':'Not set up yet.'))}</span></div></section>
+  <section class="panel"><h2>Backup <span class="count">all profiles</span></h2>
+    <p class="hint" style="margin:-6px 0 10px">Your data lives only in this browser. Export a backup regularly, and to move to another computer or browser.</p>
+    <div class="pb-row"><button class="btn small" data-act="backup-export">Export backup (.json)</button><label class="btn small" for="backup-file">Import backup</label><input type="file" id="backup-file" data-ui="backup-file" accept=".json,application/json" style="position:absolute;width:1px;height:1px;opacity:0"></div>
+    ${state.pendingImport?`<p class="confirm" style="margin-top:10px">Replace ALL data in this browser with the backup (${Object.keys(state.pendingImport).length} records)? <button class="btn small danger" data-act="backup-apply">Replace</button><button class="btn small ghost" data-act="backup-cancel">Cancel</button></p>`:''}</section>`}
+
+function relabelNode(root){const name=aiName();if(name==='Claude'||!root)return;const rx=/\bClaude(?!\s+Code)(?!'s?\s+(?:artifacts|Docs))\b/g;
+  const tw=document.createTreeWalker(root,NodeFilter.SHOW_TEXT);const hits=[];while(tw.nextNode()){const n=tw.currentNode;if(rx.test(n.nodeValue))hits.push(n);rx.lastIndex=0}
+  hits.forEach(n=>{n.nodeValue=n.nodeValue.replace(rx,name)});
+  root.querySelectorAll?.('[placeholder],[title],[aria-label]').forEach(el=>['placeholder','title','aria-label'].forEach(a=>{const v=el.getAttribute(a);if(v&&/\bClaude\b/.test(v))el.setAttribute(a,v.replace(/\bClaude\b/g,name))}))}
+let relabelObs=null;function startRelabel(){if(relabelObs)return;relabelObs=new MutationObserver(ms=>{if(aiName()==='Claude')return;for(const m of ms)m.addedNodes.forEach(n=>{if(n.nodeType===1)relabelNode(n);else if(n.nodeType===3&&n.parentNode)relabelNode(n.parentNode)})});relabelObs.observe(document.body,{childList:true,subtree:true});relabelNode(document.body)}
+
+/* ---------- profiles ---------- */
+let unsubs=[],profUnsubs=[];
+function subscribeProfile(){profUnsubs.forEach(u=>{try{u()}catch(e){}});profUnsubs=[];const before=unsubs.length;
+  unsubs.push(db.collection(P('jobs')).onSnapshot(snap=>{
     const next={};
     for(const d of snap.docs){const id=d.id;if(deleted.has(id))continue;next[id]=(timers['job:'+id]&&state.jobs[id])?state.jobs[id]:{...clone(d.data()),id};
       if(chatBusy&&state.jobs[id]&&curJob()?.id===id)next[id].chat=state.jobs[id].chat;
@@ -1447,11 +1617,53 @@ render();
     state.jobs=next;state.loaded=true;
     if(state.view==='job'&&!state.jobs[state.jobId]){state.view='board';state.jobId=null}
     if(!chatBusy)safeRender()},
-    err=>{state.loaded=true;toast(dbErr(err));render()});
-  db.doc('settings/profile').onSnapshot(s=>{if(s.exists&&!timers.profile){state.profile={...PROFILE_DEFAULT,...clone(s.data())};if(state.view!=='job')safeRender()}},()=>{});
-  db.collection('leads').onSnapshot(snap=>{const next={};for(const d of snap.docs){const id=d.id;next[id]=(timers['lead:'+id]&&state.leads[id])?state.leads[id]:{...clone(d.data()),id}}for(const id in state.leads)if(!next[id]&&timers['lead:'+id])next[id]=state.leads[id];state.leads=next;if(state.view!=='job'&&!chatBusy)safeRender();else render.badge?.()},()=>{});
-  db.doc('settings/scan').onSnapshot(s=>{const had=!!state.scan?.triggerId;state.scan=s.exists?clone(s.data()):{};if(!had&&state.scan.triggerId)loadTask();if(state.view==='leads')safeRender()},()=>{});
-  db.doc('chats/global').onSnapshot(s=>{if(s.exists&&!chatBusy&&!timers.chat){state.globalChat=clone(s.data().messages||[]);if(!curJob())renderAssistant()}},()=>{});
+    err=>{state.loaded=true;toast(dbErr(err));render()}));
+  unsubs.push(db.doc(P('settings')+'/profile').onSnapshot(s=>{if(s.exists&&!timers.profile){state.profile={...PROFILE_DEFAULT,...clone(s.data())};if(state.view!=='job')safeRender();renderProfileSelect()}else if(!s.exists){renderProfileSelect()}},()=>{}));
+  unsubs.push(db.collection(P('leads')).onSnapshot(snap=>{const next={};for(const d of snap.docs){const id=d.id;next[id]=(timers['lead:'+id]&&state.leads[id])?state.leads[id]:{...clone(d.data()),id}}for(const id in state.leads)if(!next[id]&&timers['lead:'+id])next[id]=state.leads[id];state.leads=next;if(state.view!=='job'&&!chatBusy)safeRender();else render.badge?.()},()=>{}));
+  unsubs.push(db.doc(P('settings')+'/scan').onSnapshot(s=>{const had=!!state.scan?.triggerId;state.scan=s.exists?clone(s.data()):{};if(!had&&state.scan.triggerId)loadTask();if(state.view==='leads'||state.view==='dashboard')safeRender()},()=>{}));
+  unsubs.push(db.doc(P('chats')+'/global').onSnapshot(s=>{if(s.exists&&!chatBusy&&!timers.chat){state.globalChat=clone(s.data().messages||[]);if(!curJob())renderAssistant()}},()=>{}));
+  profUnsubs=unsubs.splice(before);}
+function profLabel(id){const r=state.profiles?.[id];if(r?.name)return r.name;if(id===PID&&state.profile.name)return state.profile.name;return id==='main'?'Main profile':'Untitled profile'}
+function renderProfileSelect(){const sel=$('#profile-select');if(!sel)return;const ids=['main',...Object.keys(state.profiles||{}).filter(k=>k!=='main').sort((a,b)=>(state.profiles[a].createdAt||0)-(state.profiles[b].createdAt||0))];
+  if(!ids.includes(PID))ids.push(PID);
+  sel.innerHTML=ids.map(id=>`<option value="${esc(id)}" ${id===PID?'selected':''}>${esc(profLabel(id))}</option>`).join('')+'<option value="__new">+ New profile…</option>';sel.disabled=!db}
+function switchProfile(id){if(id===PID){renderProfileSelect();return}flushWrites();PID=id;try{localStorage.setItem('ot-profile',id)}catch(e){}
+  chatCtl?.abort();genCtl?.abort();
+  Object.assign(state,{jobs:{},leads:{},profile:{...PROFILE_DEFAULT},globalChat:[],scan:{},task:null,view:'dashboard',jobId:null,tab:'overview',loaded:false,upload:null,review:null,sub:null,gmail:null,callImport:null,leadScan:null,confirmDelete:false,confirmProfDel:false,leadOpen:{}});
+  deleted.clear();$('#modal-root').innerHTML='';render();renderProfileSelect();if(db)subscribeProfile()}
+function openNewProfile(){
+  $('#modal-root').innerHTML=`<div class="scrim" data-act="close-modal-bg"><form class="modal" data-form="new-profile" role="dialog" aria-modal="true" aria-labelledby="np-t"><h2 id="np-t">New profile</h2>
+    <p class="hint" style="margin:-6px 0 12px">Each profile has its own jobs, leads, resume, settings and Claude chats. Use one per person or per search.</p>
+    <div class="field" style="margin-bottom:10px"><label for="np-name">Profile name</label><input class="input" id="np-name" name="name" required placeholder="e.g. Sam Rivera, or Sales roles"></div>
+    <label class="check-row"><input type="checkbox" name="copy" ${state.profile.baseResume?'':'disabled'}> <span>Start with a copy of this profile's base resume and settings</span></label>
+    <div class="modal-foot"><button type="button" class="btn ghost" data-act="close-modal">Cancel</button><button class="btn primary">Create profile</button></div></form></div>`;
+  $('#np-name').focus()}
+async function createProfile(name,copy){
+  const id=uid('pr');const now=Date.now();const src=copy?clone(state.profile):null;
+  try{await db.doc('profiles/'+id).set({name,createdAt:now})}catch(e){toast(dbErr(e));return}
+  if(PID==='main'&&!state.profiles?.main){db.doc('profiles/main').set({name:state.profile.name||'Main profile',createdAt:0}).catch(()=>{})}
+  switchProfile(id);
+  const prof={...PROFILE_DEFAULT,...(src?{headline:src.headline,targets:src.targets,baseResume:src.baseResume,scanFocus:src.scanFocus||'',playbook:src.playbook||[],playbookName:src.playbookName||'',playbookIntro:src.playbookIntro||'',compCols:src.compCols||3,pdfStyle:src.pdfStyle||'classic'}:{}),name};
+  state.profile=prof;persistProfile();state.view='profile';render();toast(`Profile "${name}" created`)}
+async function deleteProfile(){
+  if(PID==='main'||!db)return;const id=PID;const pre='p/'+id+'/';
+  try{for(const col of ['jobs','leads']){const snap=await db.collection(pre+col).get();for(const d of snap.docs)await db.doc(pre+col+'/'+d.id).delete()}
+    for(const d of ['settings/profile','settings/scan','chats/global'])await db.doc(pre+d).delete();
+    await db.doc('profiles/'+id).delete()}catch(e){toast(dbErr(e))}
+  switchProfile('main');toast('Profile deleted')}
+function syncProfileName(){const name=state.profile.name||'';const rec=state.profiles?.[PID]||{createdAt:PID==='main'?0:Date.now()};queueWrite('pname',()=>db.doc('profiles/'+PID).set({...rec,name}),900)}
+
+/* ---------- boot ---------- */
+{const h=location.hash.slice(1);if(['dashboard','board','leads','jobs','profile'].includes(h))state.view=h}
+render();
+(async()=>{
+  const c=window.claude;
+  if(c&&typeof c.use==='function'){[db,sample,mcp,downloads]=await Promise.all(['db','sample','mcp','downloads'].map(n=>c.use(n).catch(()=>null)))}
+  if(!db){db=localDB();sample=apiSample();downloads=localDownloads();mcp=null;state.standalone=true;startRelabel()}
+  if(sample&&!state.standalone){try{const l=await sample.limits();toolsOK=!!l.tools}catch{toolsOK=false}}
+  unsubs.push(db.collection('profiles').onSnapshot(snap=>{const m={};snap.docs.forEach(d=>m[d.id]=clone(d.data()));state.profiles=m;
+    if(PID!=='main'&&!m[PID]&&snap.metadata&&!snap.metadata.fromCache){switchProfile('main');return}renderProfileSelect()},()=>{}));
+  subscribeProfile();
   render();
 })();
 </script>

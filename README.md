@@ -2,7 +2,7 @@
 
 A private job search tracker that runs inside [Claude](https://claude.ai) as an artifact. It keeps every target company, application, tailored resume, cover letter and conversation in one place, and has Claude built in to help at each step: finding leads, tailoring documents, drafting outreach, prepping for interviews and following up.
 
-Each person gets their own copy with their own data. The app file in this repo contains no personal information.
+Use it two ways: on the web at **https://gitcich.github.io/offer-track/**, or inside Claude. Each person gets their own copy with their own data. The app file in this repo contains no personal information.
 
 ---
 
@@ -72,6 +72,12 @@ Each person gets their own copy with their own data. The app file in this repo c
 - With your OK it can set next steps, move stages, add notes and save drafts
 - Save any answer as a note or as the cover letter
 
+### Multiple profiles
+- Profile switcher at the top of every page; each profile has its own jobs, leads, resume, settings, checklist and Claude chats
+- Create a profile from scratch or start from a copy of the current profile's resume and settings
+- Use one per person (share one tracker with family or job-club members) or one per search track
+- Each profile can have its own scheduled lead scan
+
 ### Profile and settings
 - Name, title, contact details, location, headline and target roles
 - Base resume used for every tailored version
@@ -80,7 +86,22 @@ Each person gets their own copy with their own data. The app file in this repo c
 
 ---
 
-## Requirements
+## Use it on the web (no Claude account needed)
+
+**Open: https://gitcich.github.io/offer-track/**
+
+- Works in any modern browser. Your data is saved in that browser only; use **Profile → Backup** to export and import.
+- **Bring the AI of your choice.** On the **Profile** page, pick a provider and paste your API key to turn on the AI features (tailoring, cover letters, coach, fit check, proofreading, AI PDF layout, web lead scan):
+  - **Anthropic** (Claude)
+  - **OpenAI** (GPT models)
+  - **Google Gemini**
+  - **OpenRouter** (hundreds of models from one key)
+  - **Custom OpenAI-compatible endpoint**, such as Ollama or LM Studio on your own computer, Groq or Together
+
+  You can set the main and quick model names. Usage is billed by your provider. Your key stays in your browser and is sent only to the provider you choose.
+- Gmail import and the scheduled morning scan are only available in the Claude version below. The web version has a **Scan web for leads** button instead, which uses your provider's web search (Anthropic, OpenAI, Gemini and OpenRouter; not custom endpoints).
+
+## Requirements (Claude version)
 - A Claude account (claude.ai or the Claude desktop app)
 - Optional: the **Gmail** connector, for email import and the Gmail lead scan
 - Optional: scheduled tasks, for the automatic daily lead scan
@@ -115,6 +136,7 @@ Claude publishes your private copy, fills in your profile and offers to schedule
 
 ## Repo layout
 ```
+index.html                           Web version (served by GitHub Pages)
 app/offer-track.html                 The app (single self-contained file)
 skill/offer-track-setup/SKILL.md     Setup skill instructions
 skill/offer-track-setup/assets/      Copy of the app used by the skill

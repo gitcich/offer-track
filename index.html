@@ -11,6 +11,8 @@
 
 
 
+
+
 <title>Offer Track</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -993,7 +995,7 @@ async function generateDoc(kind,srcOverride){
   const ins=d.instructions?`\nExtra instructions from the candidate: ${d.instructions}`:'';
   const jobBlock=`JOB: ${j.company} — ${j.role}${j.location?' ('+j.location+')':''}\nJOB DESCRIPTION:\n${String(j.description||'(not provided — infer sensibly from the role title)').slice(0,8000)}`;
   const prompt=kind==='resume'
-    ?`Tailor this resume for the job below. Keep every fact truthful: reorder, rephrase and emphasize, but never invent employers, titles, dates, metrics, tools or certifications. Mirror the job's key language where the experience supports it. Keep the candidate's name and contact line at the top exactly as in the source, then a 3-line summary aimed at this role. Keep it to what fits two pages. Output only the resume as plain text, using simple section headings in capitals and "- " bullets, with no commentary before or after.${ins}\n\n${srcOverride?'UPLOADED RESUME (optimize this; its text was extracted from a file, so fix any broken line breaks, stray characters or split bullets):\n'+srcOverride.slice(0,12000):d.text?'CURRENT DRAFT (improve this):\n'+d.text.slice(0,9000):'BASE RESUME:\n'+p.baseResume.slice(0,9000)}\n\n${jobBlock}`
+    ?`Tailor this resume for the job below. Keep every fact truthful: reorder, rephrase and emphasize, but never invent employers, titles, dates, metrics, tools or certifications. Mirror the job's key language where the experience supports it. Keep the candidate's name and contact line at the top exactly as in the source, then the professional summary section (always the first section, directly under the contact line), a 3-line summary aimed at this role. Keep it to what fits two pages. Output only the resume as plain text, using simple section headings in capitals and "- " bullets, with no commentary before or after.${ins}\n\n${srcOverride?'UPLOADED RESUME (optimize this; its text was extracted from a file, so fix any broken line breaks, stray characters or split bullets):\n'+srcOverride.slice(0,12000):d.text?'CURRENT DRAFT (improve this):\n'+d.text.slice(0,9000):'BASE RESUME:\n'+p.baseResume.slice(0,9000)}\n\n${jobBlock}`
     :`Write a cover letter for ${p.name||'the candidate'} applying to the job below. Tone: ${d.tone||'Warm and direct'}. 220-320 words. ${j.contact?.name?'Address it to '+j.contact.name+'.':'Use "Dear Hiring Team," if no name is known.'} Open with a specific reason for this company and role, connect two or three concrete achievements from the resume to the job's needs, and close with a clear next step. Avoid clichés like "I am excited to apply" and do not invent facts. Output only the letter text, no commentary.${ins}\n\nRESUME:\n${(j.resume?.text||p.baseResume||'(no resume provided)').slice(0,7000)}\n\n${jobBlock}\n\nNotes about this job: ${String(j.notes||'none').slice(0,1200)}`;
   state.gen=kind;genCtl=new AbortController();render();
   const ta=$('#doc-'+kind);const prev=d.text||'';
@@ -1031,6 +1033,10 @@ async function downloadDoc(kind,fmt){
 
 /* ---------- review + PDF ---------- */
 const clean=s=>String(s||'').replace(/\*\*(.+?)\*\*/g,'$1').replace(/[‘’]/g,"'").replace(/[“”]/g,'"').replace(/[–]/g,'-').replace(/[—]/g,' - ').replace(/…/g,'...').replace(/ /g,' ').replace(/\t+/g,'    ').replace(/[^\x09\x0A\x0D\x20-\x7E¡-ÿ]/g,'');
+const SUMMARY_RX=/^(professional\s+|career\s+|executive\s+)?(summary|profile|objective|overview)\b|^about\s+me\b/i;
+function summaryFirst(bs){const head=[],secs=[];let cur=null;for(const b of bs){if(b.t==='h'){cur={name:b.x,items:[b]};secs.push(cur)}else if(cur)cur.items.push(b);else head.push(b)}
+  const k=secs.findIndex(sc=>SUMMARY_RX.test(String(sc.name).trim()));if(k<=0)return bs;const [sum]=secs.splice(k,1);
+  while(head.length&&head.at(-1).t==='gap')head.pop();return[...head,{t:'gap'},...sum.items,...secs.flatMap(sc=>sc.items)]}
 function docBlocks(kind,text){
   const lines=String(text||'').replace(/\r/g,'').split('\n').flatMap(l=>l.split(/\t+(?=[\u25B8\u25AA\u2022\u25CF\u2023*-])/));const out=[];
   if(kind==='cover'){
@@ -1060,7 +1066,7 @@ function docBlocks(kind,text){
   while(out.length&&out.at(-1).t==='gap')out.pop();
   const grouped=[];for(let i=0;i<out.length;i++){let k=i;while(k<out.length&&out[k].t==='li'&&out[k].x.length<=60)k++;
     if(k-i>=4){grouped.push({t:'cols',items:out.slice(i,k).map(b=>b.x)});i=k-1}else grouped.push(out[i])}
-  return grouped}
+  return kind==='resume'?summaryFirst(grouped):grouped}
 function colsPreviewSize(items,n=3){try{const c=colsPreviewSize.c||(colsPreviewSize.c=document.createElement('canvas').getContext('2d'));
   const colPx=(620-96-(n-1)*6)/n-14-2;let fs=10;const w=()=>{c.font=`${fs}pt Helvetica, Arial, sans-serif`;return Math.max(...items.map(x=>c.measureText(x).width))};
   while(fs>6&&w()>colPx)fs-=0.25;return Math.min(fs,n===2?10.5:10)}catch(e){return 9}}
@@ -1075,7 +1081,7 @@ function reviewPaper(){const r=state.review;const j=curJob();let bs=withCols(doc
     return navyHtml(orderBlocks(bs,T.order),r.kind)}
   return r.style==='navy'?navyHtml(bs,r.kind):blocksHtml(bs,r.kind)}
 function orderBlocks(bs,order){if(!order||!order.length)return bs;const head=[],secs=[];let cur=null;for(const b of bs){if(b.t==='h'){cur={name:b.x,items:[b]};secs.push(cur)}else if(cur)cur.items.push(b);else head.push(b)}
-  const key=x=>String(x).toLowerCase().replace(/[^a-z]/g,'');const used=new Set();const out=[...head];for(const o of order){const sc=secs.find(sc=>!used.has(sc)&&(key(sc.name).includes(key(o))||key(o).includes(key(sc.name))));if(sc){used.add(sc);out.push(...sc.items)}}secs.forEach(sc=>{if(!used.has(sc))out.push(...sc.items)});return out}
+  const key=x=>String(x).toLowerCase().replace(/[^a-z]/g,'');const used=new Set();const out=[...head];for(const o of order){const sc=secs.find(sc=>!used.has(sc)&&(key(sc.name).includes(key(o))||key(o).includes(key(sc.name))));if(sc){used.add(sc);out.push(...sc.items)}}secs.forEach(sc=>{if(!used.has(sc))out.push(...sc.items)});return pinSummary(out,'blocks')}
 function aiPanel(){const r=state.review;if(r.style!=='ai')return '';const T=state.profile.aiTheme;
   return `<div id="rv-ai">${T?`<div class="hint" style="margin-bottom:2px">Claude's layout choices</div><ul class="ai-why">${(T.rationale||[]).map(x=>`<li>${esc(x)}</li>`).join('')}<li>${T.font==='times'?'Times':'Helvetica'}, ${T.format==='a4'?'A4':'US Letter'}, ${T.cols}-column competencies, fits on ${r.pages||'?'} page${r.pages===1?'':'s'}${r.fitScale&&r.fitScale<(T.baseScale||1)-.001?' (text tightened to fit)':''}.</li></ul>`:''}
     <button class="btn small${T?'':' primary'}" data-act="rev-ai" ${sample&&!r.aiBusy?'':'disabled'}>${ICONS.spark} ${r.aiBusy?'Designing…':T?'Re-optimize layout':'Optimize layout with Claude'}</button>${r.aiErr?`<p class="hint" style="margin:6px 0 0">${esc(r.aiErr)}</p>`:''}</div>`}
@@ -1090,7 +1096,7 @@ async function optimizeLayout(){
   try{const o=await sample.json(`You are an expert resume designer. Choose a PDF layout for this resume using hiring best practice: ATS-safe single column, high-contrast readable body text (9-11pt equivalent), restrained professional color (one dark heading color plus one accent), clear section hierarchy, consistent spacing, and section order that leads with what best sells the candidate for the target role. Keep it to 2 pages max for 10+ years of experience (1 page if it can fit without cramping).
 
 Reply with ONLY JSON:
-{"font":"helvetica"|"times","pageSize":"letter"|"a4","marginPt":32-60,"sizeScale":0.9-1.1 (1 = 8.6pt body),"headingColor":"#hex (dark, >=7:1 on white)","accentColor":"#hex (>=4.5:1 on white)","bodyColor":"#hex (dark gray, >=7:1)","dividerColor":"#hex (light gray)","headingCase":"upper"|"title","headingRule":true|false,"ruleWeight":0.6-2.4,"competencyColumns":2|3,"maxPages":1|2,"sectionOrder":[section names from the list below, in the order to show],"rationale":[3-5 short sentences explaining the choices in plain words]}
+{"font":"helvetica"|"times","pageSize":"letter"|"a4","marginPt":32-60,"sizeScale":0.9-1.1 (1 = 8.6pt body),"headingColor":"#hex (dark, >=7:1 on white)","accentColor":"#hex (>=4.5:1 on white)","bodyColor":"#hex (dark gray, >=7:1)","dividerColor":"#hex (light gray)","headingCase":"upper"|"title","headingRule":true|false,"ruleWeight":0.6-2.4,"competencyColumns":2|3,"maxPages":1|2,"sectionOrder":[section names from the list below, in the order to show; the summary/profile section must always be first],"rationale":[3-5 short sentences explaining the choices in plain words]}
 
 Candidate location: ${state.profile.location||'not specified'} (use this to pick US Letter vs A4). Target role: ${j.role||'(not set)'} at ${j.company||'(not set)'}. Industry context: ${String(j.description||'').slice(0,600)}
 Resume stats: ${words} words, ${roles} roles, ${bullets} bullets, ${comp.length} competencies (longest ${Math.max(0,...comp.map(x=>x.length))} chars).
@@ -1176,12 +1182,14 @@ function navyHtml(bs,kind){const ns=navyNodes(bs,kind);
 function navyColsSize(items,n){try{const c=colsPreviewSize.c||(colsPreviewSize.c=document.createElement('canvas').getContext('2d'));
   const colPx=(620-80-(n-1)*16)/n-2;let fs=9.5;const w=()=>{c.font=`700 ${fs}pt Arial, Helvetica, sans-serif`;return Math.max(...items.map(x=>c.measureText(x).width))};
   while(fs>6&&w()>colPx)fs-=0.25;return fs}catch(e){return 9}}
+function pinSummary(list){const head=[],secs=[];let cur=null;for(const n of list){if(n.t==='h'){cur=[n];secs.push(cur)}else if(cur)cur.push(n);else head.push(n)}
+  const k=secs.findIndex(sc=>SUMMARY_RX.test(String(sc[0].x).trim()));if(k<=0)return list;const [sum]=secs.splice(k,1);return[...head,...sum,...secs.flat()]}
 function orderNodes(nodes,order){
   if(!Array.isArray(order)||!order.length)return nodes;
   const head=[],secs=[];let cur=null;for(const n of nodes){if(n.t==='h'){cur={name:n.x,nodes:[n]};secs.push(cur)}else if(cur)cur.nodes.push(n);else head.push(n)}
   const key=x=>String(x).toLowerCase().replace(/[^a-z]/g,'');const used=new Set();const out=[...head];
   for(const o of order){const sc=secs.find(sc=>!used.has(sc)&&(key(sc.name)===key(o)||key(sc.name).includes(key(o))||key(o).includes(key(sc.name))));if(sc){used.add(sc);out.push(...sc.nodes)}}
-  secs.forEach(sc=>{if(!used.has(sc))out.push(...sc.nodes)});return out}
+  secs.forEach(sc=>{if(!used.has(sc))out.push(...sc.nodes)});return pinSummary(out,'nodes')}
 const hexRgb=h=>{const m=/^#?([0-9a-f]{6})$/i.exec(String(h||'').trim());if(!m)return null;const v=parseInt(m[1],16);return[(v>>16)&255,(v>>8)&255,v&255]};
 const rgbHex=c=>'#'+c.map(v=>v.toString(16).padStart(2,'0')).join('');
 const lum=c=>{const f=v=>{v/=255;return v<=.03928?v/12.92:Math.pow((v+.055)/1.055,2.4)};return .2126*f(c[0])+.7152*f(c[1])+.0722*f(c[2])};

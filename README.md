@@ -129,6 +129,7 @@ Claude publishes your private copy, fills in your profile and offers to schedule
 
 ## Privacy
 - Your jobs, leads, resume and chats are stored in your own artifact's database, not in this repo or the app file.
+- The web version counts anonymous page visits with [GoatCounter](https://www.goatcounter.com/) (no cookies, no personal data). Your jobs, resumes and API keys never leave your browser, except that AI requests go directly to the provider you chose.
 - Your copy is private to you. Sharing its link gives others access to your data, so share with care.
 - To give the app to someone else, send them this repo or the skill zip, not your artifact link.
 
